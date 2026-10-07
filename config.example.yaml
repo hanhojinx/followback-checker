@@ -1,0 +1,5 @@
+# Documentation only; v0.1 uses CLI flags, not a configuration file.
+# Run fbchk --data-dir ./data --output-dir ./output scan --source export --path ...
+data_dir: ./data
+output_dir: ./output
+# Do not put credentials, cookies, or session tokens here.

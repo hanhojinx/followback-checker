@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "followback-checker"
+version = "0.1.0"
+description = "Privacy-first, local Instagram follow relationship analyzer"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = []
+
+[project.scripts]
+fbchk = "followback_checker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
