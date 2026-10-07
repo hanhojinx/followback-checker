@@ -79,6 +79,8 @@ No previous snapshot; changes will be available after the next scan.
 
 매 scan마다 `data/snapshots/YYYY-MM-DD_HHMMSS_ffffff_id.json`을 저장합니다. 이전 기록이 존재한다면 동일한 account 라벨의 직전 스냅샷과 비교합니다.
 
+스냅샷에는 계정별 저장 순번도 기록합니다. 저장 시간이 같거나 PC 시간이 뒤로 조정되어도 이전 실행과 현재 실행의 순서를 유지합니다. 순번이 없는 기존 스냅샷도 계속 읽을 수 있으며, 기존 기록은 시간순으로 정렬한 뒤 새 기록보다 앞에 둡니다.
+
 | 예시 | 예시별 의미 |
 | --- | --- |
 | `unfollowed_you` | 이전 팔로워에 있었지만 지금은 없는 계정 |

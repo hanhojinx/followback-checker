@@ -23,11 +23,16 @@ def atomic_text(path: Path, content: str):
 
 
 def save_snapshot(directory: Path, account: str, relationships: Relationships) -> Path:
+    # Persist ordering across CLI processes. Wall-clock timestamps can tie or
+    # move backwards; UUIDs keep filenames unique but cannot order executions.
+    previous = load_snapshots(directory, account)
+    sequence = max((item[1].get("sequence", 0) for item in previous), default=0) + 1
     now = datetime.now().astimezone()
     payload = {
         "schema_version": 1,
         "account": account,
         "created_at": now.isoformat(),
+        "sequence": sequence,
         "followers": sorted(relationships.followers),
         "following": sorted(relationships.following),
     }
@@ -45,6 +50,10 @@ def load_snapshots(directory: Path, account: str) -> list[tuple[Path, dict, Rela
                 raise ValueError("Unsupported snapshot schema")
             if payload["account"] != account:
                 continue
+            if "sequence" in payload:
+                sequence = payload["sequence"]
+                if type(sequence) is not int or sequence < 1:
+                    raise ValueError("Snapshot sequence must be a positive integer")
             created = datetime.fromisoformat(payload["created_at"])
             if created.tzinfo is None:
                 raise ValueError("Snapshot timestamp must include a timezone")
@@ -55,6 +64,9 @@ def load_snapshots(directory: Path, account: str) -> list[tuple[Path, dict, Rela
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise ValueError(f"Invalid snapshot {path}: {exc}") from exc
     return sorted(snapshots, key=lambda item: (
+        # Legacy snapshots have no sequence. Keep their original chronological
+        # order before new snapshots without rewriting existing user data.
+        item[1].get("sequence", 0),
         datetime.fromisoformat(item[1]["created_at"]), item[0].name,
     ))
 

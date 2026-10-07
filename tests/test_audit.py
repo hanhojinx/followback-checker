@@ -5,7 +5,10 @@ import json
 import tempfile
 import unittest
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from followback_checker.cli import main
 from followback_checker.comparator import Relationships, changes
@@ -102,6 +105,67 @@ class ParserTests(unittest.TestCase):
 
 
 class HistoryTests(unittest.TestCase):
+    def test_equal_timestamps_preserve_creation_order_across_saves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            before = Relationships.from_iterables(["alice", "bob"], ["alice", "carol"])
+            after = Relationships.from_iterables(["alice", "dave"], ["alice", "eve"])
+            fixed = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+            # Force equal timestamps and reverse filename order. Separate clock
+            # patches model independent CLI runs rather than in-memory state.
+            for relation, identifier in ((before, "ffffffff"), (after, "00000000")):
+                with patch("followback_checker.history.datetime", wraps=datetime) as clock, \
+                        patch("followback_checker.history.uuid4", return_value=SimpleNamespace(hex=identifier)):
+                    clock.now.return_value = fixed
+                    save_snapshot(root, "me", relation)
+            snapshots = load_snapshots(root, "me")
+            self.assertEqual(snapshots[0][2], before)
+            self.assertEqual(snapshots[-1][2], after)
+            self.assertEqual([item[1]["sequence"] for item in snapshots], [1, 2])
+            self.assertEqual(latest_changes(snapshots), changes(before, after))
+
+    def test_clock_moving_backwards_does_not_reverse_saved_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            before = Relationships.from_iterables(["alice"], [])
+            after = Relationships.from_iterables(["bob"], [])
+            fixed = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+            with patch("followback_checker.history.datetime", wraps=datetime) as clock:
+                clock.now.side_effect = [fixed, fixed - timedelta(hours=1)]
+                save_snapshot(root, "me", before)
+                save_snapshot(root, "me", after)
+            snapshots = load_snapshots(root, "me")
+            self.assertEqual(latest_changes(snapshots), changes(before, after))
+
+    def test_legacy_snapshot_is_readable_and_precedes_new_saves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy = {
+                "schema_version": 1, "account": "me", "created_at": "2026-10-07T12:00:00+00:00",
+                "followers": ["alice"], "following": [],
+            }
+            (root / "legacy.json").write_text(json.dumps(legacy))
+            with patch("followback_checker.history.datetime", wraps=datetime) as clock:
+                clock.now.return_value = datetime(2026, 10, 7, 11, tzinfo=timezone.utc)
+                save_snapshot(root, "me", Relationships.from_iterables(["bob"], []))
+                save_snapshot(root, "me", Relationships.from_iterables(["carol"], []))
+            snapshots = load_snapshots(root, "me")
+            self.assertEqual(snapshots[0][0].name, "legacy.json")
+            self.assertEqual([item[2].followers for item in snapshots], [{"alice"}, {"bob"}, {"carol"}])
+            self.assertEqual([item[1].get("sequence", 0) for item in snapshots], [0, 1, 2])
+
+    def test_invalid_sequence_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            saved = save_snapshot(root, "me", Relationships.from_iterables([], []))
+            payload = json.loads(saved.read_text())
+            for sequence in (0, -1, "1", True):
+                with self.subTest(sequence=sequence):
+                    payload["sequence"] = sequence
+                    saved.write_text(json.dumps(payload))
+                    with self.assertRaisesRegex(ValueError, "sequence"):
+                        load_snapshots(root, "me")
+
     def test_round_trip_first_scan_diff_and_account_isolation(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
@@ -116,6 +180,7 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(len(snapshots), 2)
             self.assertEqual(latest_changes(snapshots), changes(before, after))
             self.assertEqual(load_snapshots(directory, "missing"), [])
+            self.assertEqual(load_snapshots(directory, "other")[0][1]["sequence"], 1)
             self.assertEqual(snapshots[-1][2], after)
 
     def test_corruption_is_reported(self):
